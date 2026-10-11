@@ -5,7 +5,7 @@ import numpy as np
 import requests
 import time
 import warnings
-import os  # 新增：用來建立記憶檔案
+import os
 
 warnings.filterwarnings("ignore")
 
@@ -16,7 +16,7 @@ st.markdown("精準捕捉 **OB 訂單塊回踩** 與 **WaveTrend 恐慌轉折**�
 
 # ─── 記憶功能：讀取與儲存收藏名單 ───
 FAV_FILE = "favorites.txt"
-DEFAULT_FAVS = "SPY, QQQ, NVDA, TSLA, 2330.TW, 0050.TW, BTC-USD, ^TWII, NQ=F, ES=F"
+DEFAULT_FAVS = "SPY, QQQ, NVDA, TSLA, 2330.TW, 0050.TW, BTC-USD, BZ=F, ^TWII, NQ=F"
 
 def load_favorites():
     if os.path.exists(FAV_FILE):
@@ -165,32 +165,40 @@ def scan_4h_signals(df, recent_k):
         bull_obs = [ob for ob in bull_obs if close.iloc[i] >= ob['bot']][-5:]
         bear_obs = [ob for ob in bear_obs if close.iloc[i] <= ob['top']][-5:]
 
+        # ─── 訊號產生與時間/點位標記 ───
         curr_sigs = []
-        if (wt1.iloc[i] > wt2.iloc[i]) and (wt1.iloc[i-1] <= wt2.iloc[i-1]) and (wt1.iloc[i-1] <= -60.0) and wvf_ext.iloc[i-1] and rsi_red_below.iloc[i-1]: curr_sigs.append("🟢【恐慌抄底】")
+        t_str = df.index[i].strftime('%m/%d %H:%M') # 取得 K 棒時間
+        c_p = f"{close.iloc[i]:.2f}"                # 取得當下收盤價
+
+        if (wt1.iloc[i] > wt2.iloc[i]) and (wt1.iloc[i-1] <= wt2.iloc[i-1]) and (wt1.iloc[i-1] <= -60.0) and wvf_ext.iloc[i-1] and rsi_red_below.iloc[i-1]: 
+            curr_sigs.append(f"🟢【恐慌抄底】({t_str} @ {c_p})")
         if (wt1.iloc[i] <= -60.0) and wvf_ext.iloc[i] and rsi_red_below.iloc[i] and not os_ext_trig:
-            curr_sigs.append("🟣【極度超賣】"); os_ext_trig = True
+            curr_sigs.append(f"🟣【極度超賣】({t_str} @ {c_p})"); os_ext_trig = True
         if (mb_combo_bar.iloc[i] or mb_combo_bar.iloc[i-1] or mb_combo_bar.iloc[i-2]) and (close.iloc[i] > close.iloc[i-1]) and (close.iloc[i-1] > close.iloc[i-2]) and not mb_fired_in_cycle:
-            curr_sigs.append("🟡【Market Bottom】"); mb_fired_in_cycle = True
+            curr_sigs.append(f"🟡【Market Bottom】({t_str} @ {c_p})"); mb_fired_in_cycle = True
         if (wt1.iloc[i] <= -53.0) and wvf_ext.iloc[i] and not os_warn_trig:
-            curr_sigs.append("🟪【超賣預警】"); os_warn_trig = True
+            curr_sigs.append(f"🟪【超賣預警】({t_str} @ {c_p})"); os_warn_trig = True
         if (top_cond_bar.iloc[i] or top_cond_bar.iloc[i-1] or top_cond_bar.iloc[i-2]) and (close.iloc[i] < open_p.iloc[i]) and (close.iloc[i] < close.iloc[i-1]) and (low.iloc[i] <= low.iloc[i-1]) and (close.iloc[i-1] < open_p.iloc[i-1]) and (close.iloc[i-1] < close.iloc[i-2]) and (low.iloc[i-1] <= low.iloc[i-2]) and not top_fired_in_cycle:
-            curr_sigs.append("⚠️【頂部預警】"); top_fired_in_cycle = True
+            curr_sigs.append(f"⚠️【頂部預警】({t_str} @ {c_p})"); top_fired_in_cycle = True
         if (wt1.iloc[i] < wt2.iloc[i]) and (wt1.iloc[i-1] >= wt2.iloc[i-1]) and (wt1.iloc[i-1] > 60.0) and not wt_dead_trig:
-            curr_sigs.append("🟠【WT 死叉】"); wt_dead_trig = True
+            curr_sigs.append(f"🟠【WT 死叉】({t_str} @ {c_p})"); wt_dead_trig = True
         if (wt1.iloc[i] >= 53.0) and not ob_warn_trig:
-            curr_sigs.append("🟡【超買預警】"); ob_warn_trig = True
+            curr_sigs.append(f"🟡【超買預警】({t_str} @ {c_p})"); ob_warn_trig = True
 
         can_fire_rt = (i - rt_last_sig) >= 10
         if (close.iloc[i] > rt_lower.iloc[i]) and ((low.iloc[i] < rt_lower.iloc[i] and close.iloc[i-1] > rt_lower.iloc[i] and rt_blw_cnt <= 10) or (close.iloc[i-1] < rt_lower.iloc[i] and rt_blw_cnt <= 10)) and can_fire_rt and (oversell_count.iloc[i] > 0):
-            curr_sigs.append("🛡️【空頭陷阱 (Bull Trap)】"); rt_last_sig = i
+            curr_sigs.append(f"🛡️【空頭陷阱】({t_str} @ {c_p})"); rt_last_sig = i
         if (close.iloc[i] < rt_upper.iloc[i]) and ((high.iloc[i] > rt_upper.iloc[i] and close.iloc[i-1] < rt_upper.iloc[i] and rt_abv_cnt <= 10) or (close.iloc[i-1] > rt_upper.iloc[i] and rt_abv_cnt <= 10)) and can_fire_rt and (overbuy_count.iloc[i] > 0):
-            curr_sigs.append("⚠️【多頭陷阱 (Bear Trap)】"); rt_last_sig = i
+            curr_sigs.append(f"⚠️【多頭陷阱】({t_str} @ {c_p})"); rt_last_sig = i
 
         if i >= n - recent_k:
             for ob in bull_obs:
-                if low.iloc[i-1] >= ob['top'] and low.iloc[i] <= ob['top']: curr_sigs.append("🧱【OB支撐回踩】")
+                if low.iloc[i-1] >= ob['top'] and low.iloc[i] <= ob['top']: 
+                    curr_sigs.append(f"🧱【OB支撐回踩】({t_str} 踩 {ob['top']:.2f})")
             for ob in bear_obs:
-                if high.iloc[i-1] <= ob['bot'] and high.iloc[i] >= ob['bot']: curr_sigs.append("🧱【OB壓力測試】")
+                if high.iloc[i-1] <= ob['bot'] and high.iloc[i] >= ob['bot']: 
+                    curr_sigs.append(f"🧱【OB壓力測試】({t_str} 測 {ob['bot']:.2f})")
+            
             for sig in curr_sigs:
                 if sig not in latest_signals: latest_signals.append(sig)
 
@@ -207,17 +215,15 @@ def format_vol(val):
 # ─── 網頁側邊欄設定 ───
 st.sidebar.header("⚙️ 雷達掃描設定")
 
-# 讀取先前的收藏紀錄
 saved_favs = load_favorites()
 
 st.sidebar.subheader("📌 收藏標的 (自訂清單)")
 fav_input = st.sidebar.text_area(
     "請輸入股票代號 (用半形逗號分隔)：",
     value=saved_favs,
-    help="台股大盤請輸入 ^TWII，納斯達克期貨 NQ=F，S&P500期貨 ES=F。"
+    help="台股大盤請輸入 ^TWII，布蘭特原油 BZ=F，納斯達克期貨 NQ=F，S&P500期貨 ES=F。"
 )
 
-# 儲存按鈕
 if st.sidebar.button("💾 儲存收藏清單"):
     save_favorites(fav_input)
     st.sidebar.success("清單已儲存！")
@@ -247,7 +253,7 @@ if scan_btn:
                 st.warning("⚠️ 雲端主機被維基百科阻擋爬蟲，已自動切換至內建的「Top 40 龍頭備用清單」！")
             all_tickers.extend(us_stocks)
     
-    all_tickers = list(dict.fromkeys(all_tickers)) # 去除重複
+    all_tickers = list(dict.fromkeys(all_tickers)) 
     
     if not all_tickers:
         st.error("❌ 找不到要掃描的標的，請確認自訂清單是否正確！")
