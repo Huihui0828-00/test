@@ -256,7 +256,3 @@ Original file is located at
 #         st.dataframe(df_report[["標的代號", "日均交易量", "最新收盤", "4H WT快線", "觸發指標通知"]], use_container_width=True, height=600)
 #     else:
 #         st.warning(f"🎯 目前大盤與各產業龍頭近 3 根 4H K線均未觸發指標。(耗時: {int(time.time() - start_time)} 秒)")
-
-import urllib
-print("👉 你的通關密碼 (Endpoint IP) 是：", urllib.request.urlopen('https://ipv4.icanhazip.com').read().decode('utf8').strip("\n"))
-streamlit run app.py & npx localtunnel --port 8501
