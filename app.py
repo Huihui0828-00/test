@@ -7,7 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/1tBH-iPS7YxI4ZbpuwyfDooJSNp0y5eig
 """
 
-!pip install -q yfinance pandas numpy requests lxml
 
 # Commented out IPython magic to ensure Python compatibility.
 # %%writefile app.py
