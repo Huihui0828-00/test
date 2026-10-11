@@ -142,4 +142,165 @@ def scan_4h_signals(df, recent_k):
         size = 5
         if i >= size * 2:
             if max([high.iloc[j] for j in range(i - size*2, i + 1)]) == high.iloc[i - size]:
-                last_ph, ph_idx = high.iloc
+                last_ph, ph_idx = high.iloc[i - size], i - size
+            if min([low.iloc[j] for j in range(i - size*2, i + 1)]) == low.iloc[i - size]:
+                last_pl, pl_idx = low.iloc[i - size], i - size
+
+            if close.iloc[i] > last_ph and ph_idx != -1:
+                start_idx = max(0, pl_idx)
+                ob_idx, min_l = start_idx, low.iloc[start_idx]
+                for j in range(start_idx, i + 1):
+                    if low.iloc[j] < min_l: min_l, ob_idx = low.iloc[j], j
+                bull_obs.append({'top': high.iloc[ob_idx], 'bot': low.iloc[ob_idx]})
+                last_ph = float('inf')
+
+            if close.iloc[i] < last_pl and pl_idx != -1:
+                start_idx = max(0, ph_idx)
+                ob_idx, max_h = start_idx, high.iloc[start_idx]
+                for j in range(start_idx, i + 1):
+                    if high.iloc[j] > max_h: max_h, ob_idx = high.iloc[j], j
+                bear_obs.append({'top': high.iloc[ob_idx], 'bot': low.iloc[ob_idx]})
+                last_pl = -float('inf')
+
+        bull_obs = [ob for ob in bull_obs if close.iloc[i] >= ob['bot']][-5:]
+        bear_obs = [ob for ob in bear_obs if close.iloc[i] <= ob['top']][-5:]
+
+        curr_sigs = []
+        if (wt1.iloc[i] > wt2.iloc[i]) and (wt1.iloc[i-1] <= wt2.iloc[i-1]) and (wt1.iloc[i-1] <= -60.0) and wvf_ext.iloc[i-1] and rsi_red_below.iloc[i-1]: curr_sigs.append("🟢【恐慌抄底】")
+        if (wt1.iloc[i] <= -60.0) and wvf_ext.iloc[i] and rsi_red_below.iloc[i] and not os_ext_trig:
+            curr_sigs.append("🟣【極度超賣】"); os_ext_trig = True
+        if (mb_combo_bar.iloc[i] or mb_combo_bar.iloc[i-1] or mb_combo_bar.iloc[i-2]) and (close.iloc[i] > close.iloc[i-1]) and (close.iloc[i-1] > close.iloc[i-2]) and not mb_fired_in_cycle:
+            curr_sigs.append("🟡【Market Bottom】"); mb_fired_in_cycle = True
+        if (wt1.iloc[i] <= -53.0) and wvf_ext.iloc[i] and not os_warn_trig:
+            curr_sigs.append("🟪【超賣預警】"); os_warn_trig = True
+        if (top_cond_bar.iloc[i] or top_cond_bar.iloc[i-1] or top_cond_bar.iloc[i-2]) and (close.iloc[i] < open_p.iloc[i]) and (close.iloc[i] < close.iloc[i-1]) and (low.iloc[i] <= low.iloc[i-1]) and (close.iloc[i-1] < open_p.iloc[i-1]) and (close.iloc[i-1] < close.iloc[i-2]) and (low.iloc[i-1] <= low.iloc[i-2]) and not top_fired_in_cycle:
+            curr_sigs.append("⚠️【頂部預警】"); top_fired_in_cycle = True
+        if (wt1.iloc[i] < wt2.iloc[i]) and (wt1.iloc[i-1] >= wt2.iloc[i-1]) and (wt1.iloc[i-1] > 60.0) and not wt_dead_trig:
+            curr_sigs.append("🟠【WT 死叉】"); wt_dead_trig = True
+        if (wt1.iloc[i] >= 53.0) and not ob_warn_trig:
+            curr_sigs.append("🟡【超買預警】"); ob_warn_trig = True
+
+        can_fire_rt = (i - rt_last_sig) >= 10
+        if (close.iloc[i] > rt_lower.iloc[i]) and ((low.iloc[i] < rt_lower.iloc[i] and close.iloc[i-1] > rt_lower.iloc[i] and rt_blw_cnt <= 10) or (close.iloc[i-1] < rt_lower.iloc[i] and rt_blw_cnt <= 10)) and can_fire_rt and (oversell_count.iloc[i] > 0):
+            curr_sigs.append("🛡️【空頭陷阱 (Bull Trap)】"); rt_last_sig = i
+        if (close.iloc[i] < rt_upper.iloc[i]) and ((high.iloc[i] > rt_upper.iloc[i] and close.iloc[i-1] < rt_upper.iloc[i] and rt_abv_cnt <= 10) or (close.iloc[i-1] > rt_upper.iloc[i] and rt_abv_cnt <= 10)) and can_fire_rt and (overbuy_count.iloc[i] > 0):
+            curr_sigs.append("⚠️【多頭陷阱 (Bear Trap)】"); rt_last_sig = i
+
+        if i >= n - recent_k:
+            for ob in bull_obs:
+                if low.iloc[i-1] >= ob['top'] and low.iloc[i] <= ob['top']: curr_sigs.append("🧱【OB支撐回踩】")
+            for ob in bear_obs:
+                if high.iloc[i-1] <= ob['bot'] and high.iloc[i] >= ob['bot']: curr_sigs.append("🧱【OB壓力測試】")
+            for sig in curr_sigs:
+                if sig not in latest_signals: latest_signals.append(sig)
+
+    if latest_signals:
+        return {"標的代號": df.name if hasattr(df, 'name') else "", "最新收盤": f"{close.iloc[-1]:.2f}", "4H WT快線": round(float(wt1.iloc[-1]), 1), "觸發指標通知": " ｜ ".join(latest_signals)}
+    return None
+
+def format_vol(val):
+    if val == 0 or pd.isna(val): return "N/A"
+    if val >= 1e9: return f"{val/1e9:.2f} B"
+    if val >= 1e6: return f"{val/1e6:.2f} M"
+    return str(val)
+
+# ─── 網頁側邊欄設定 ───
+st.sidebar.header("⚙️ 雷達掃描設定")
+
+# 讀取先前的收藏紀錄
+saved_favs = load_favorites()
+
+st.sidebar.subheader("📌 收藏標的 (自訂清單)")
+fav_input = st.sidebar.text_area(
+    "請輸入股票代號 (用半形逗號分隔)：",
+    value=saved_favs,
+    help="台股大盤請輸入 ^TWII，納斯達克期貨 NQ=F，S&P500期貨 ES=F。"
+)
+
+# 儲存按鈕
+if st.sidebar.button("💾 儲存收藏清單"):
+    save_favorites(fav_input)
+    st.sidebar.success("清單已儲存！")
+
+st.sidebar.subheader("🌍 全市場掃描擴充")
+scan_us_indices = st.sidebar.checkbox("同步掃描美股三大指數 (約 900 檔)", value=False)
+
+st.sidebar.subheader("🎯 訊號觸發條件")
+recent_k = st.sidebar.number_input("掃描近 N 根 4H K線", min_value=1, max_value=10, value=3)
+
+st.sidebar.subheader("📅 底層資料參數")
+scan_days = st.sidebar.slider("載入歷史天數", min_value=30, max_value=90, value=60)
+
+scan_btn = st.sidebar.button("🚀 立即啟動掃描", use_container_width=True)
+
+# ─── 主程式掃描執行 ───
+if scan_btn:
+    favorites = [t.strip().upper() for t in fav_input.split(",") if t.strip()]
+    all_tickers = favorites.copy()
+    
+    if scan_us_indices:
+        with st.spinner("🔄 正在取得美股三大指數成分股清單..."):
+            us_stocks, success = get_us_indices()
+            if success:
+                st.success("✅ 成功從維基百科取得 900+ 檔美股清單！")
+            else:
+                st.warning("⚠️ 雲端主機被維基百科阻擋爬蟲，已自動切換至內建的「Top 40 龍頭備用清單」！")
+            all_tickers.extend(us_stocks)
+    
+    all_tickers = list(dict.fromkeys(all_tickers)) # 去除重複
+    
+    if not all_tickers:
+        st.error("❌ 找不到要掃描的標的，請確認自訂清單是否正確！")
+        st.stop()
+
+    st.info(f"🚀 準備就緒！即將掃描共 {len(all_tickers)} 檔標的...")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    chunk_size = 80
+    triggered_results = []
+    start_time = time.time()
+
+    for i in range(0, len(all_tickers), chunk_size):
+        batch = all_tickers[i:i+chunk_size]
+        status_text.text(f"⏳ 正在下載與分析 K 線: {i} / {len(all_tickers)} ...")
+
+        try:
+            data = yf.download(batch, period=f"{scan_days}d", interval="1h", group_by='ticker', progress=False, threads=True)
+            for t in batch:
+                try:
+                    df_t = data[t] if len(batch) > 1 else data
+                    df_t = df_t.dropna(subset=['Close'])
+                    if len(df_t) > 40:
+                        df_t.name = t
+                        res = scan_4h_signals(resample_to_tv_4h(df_t), recent_k)
+                        if res:
+                            res["標的代號"] = t
+                            triggered_results.append(res)
+                except: continue
+        except: continue
+
+        progress_bar.progress(min((i + chunk_size) / len(all_tickers), 1.0))
+
+    status_text.text("🔍 掃描完畢！正在抓取交易量與排版...")
+
+    if triggered_results:
+        for res in triggered_results:
+            ticker = res['標的代號']
+            try:
+                info = yf.Ticker(ticker).info
+                res['Raw_Volume'] = info.get('averageVolume', info.get('volume', 0))
+            except: res['Raw_Volume'] = 0
+
+            res['日均交易量'] = format_vol(res['Raw_Volume'])
+            res['Priority'] = 1 if ticker in favorites else 0
+            if ticker in favorites: res['標的代號'] = f"⭐ {ticker}"
+
+        df_report = pd.DataFrame(triggered_results)
+        df_report = df_report.sort_values(by=['Priority', 'Raw_Volume'], ascending=[False, False])
+        df_report = df_report.drop(columns=['Raw_Volume', 'Priority'])
+
+        st.success(f"🎯 掃描完成！共發現 {len(df_report)} 檔觸發訊號。(耗時: {int(time.time() - start_time)} 秒)")
+        st.dataframe(df_report[["標的代號", "日均交易量", "最新收盤", "4H WT快線", "觸發指標通知"]], use_container_width=True, height=600)
+    else:
+        st.warning(f"🎯 目前掃描清單內，近 {recent_k} 根 4H K線均未觸發指標。(耗時: {int(time.time() - start_time)} 秒)")
