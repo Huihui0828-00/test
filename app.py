@@ -18,19 +18,32 @@ st.markdown("精準捕捉 **OB 訂單塊回踩** 與 **WaveTrend 恐慌轉折**�
 def get_us_indices():
     def fetch_wiki(url):
         try:
-            # 加上更真實的偽裝標頭，避免被維基百科阻擋
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            html = requests.get(url, headers=headers, timeout=10).text
-            for df in pd.read_html(html):
+            # 強化偽裝：讓請求看起來像真實的瀏覽器
+            storage_options = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            dfs = pd.read_html(url, storage_options=storage_options)
+            for df in dfs:
                 if 'Symbol' in df.columns: return df['Symbol'].str.replace('.', '-', regex=False).tolist()
                 if 'Ticker' in df.columns: return df['Ticker'].str.replace('.', '-', regex=False).tolist()
-        except: return []
+        except Exception:
+            pass
         return []
     
     sp500 = fetch_wiki("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
     ndx   = fetch_wiki("https://en.wikipedia.org/wiki/Nasdaq-100")
     sox   = fetch_wiki("https://en.wikipedia.org/wiki/PHLX_Semiconductor_Sector")
-    return list(dict.fromkeys([t for t in (sp500 + ndx + sox) if isinstance(t, str) and len(t) <= 7]))
+    
+    combined = list(dict.fromkeys([t for t in (sp500 + ndx + sox) if isinstance(t, str) and len(t) <= 7]))
+    
+    # 備援機制：如果維基百科擋住雲端 IP，至少載入這 40 檔核心標的
+    if len(combined) < 100:
+        backup = [
+            "SPY", "QQQ", "DIA", "IWM", "SOXX", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", 
+            "AMD", "WDC", "MU", "AVGO", "SMCI", "INTC", "QCOM", "TSM", "ASML", "ARM", "NVO",
+            "PLTR", "MSTR", "COIN", "MARA", "DJT", "SPCE", "RDDT", "HOOD", "SNOW",
+            "CEG", "VST", "NEE", "IONQ", "RKLB", "ASTS", "BTC-USD", "ETH-USD", "SOL-USD"
+        ]
+        return backup, False # False 代表觸發備援機制
+    return combined, True # True 代表成功抓到 900 檔
 
 def rma(series, length): return series.ewm(alpha=1.0/length, adjust=False).mean()
 
@@ -44,7 +57,6 @@ def resample_to_tv_4h(df_1h):
     df_4h.index = [pd.Timestamp(f"{d} {'09:30' if s==0 else '13:30'}").tz_localize('America/New_York') for d, s in df_4h.index]
     return df_4h.sort_index()
 
-# 加入 recent_k 參數，控制要掃描近幾根 K 棒
 def scan_4h_signals(df, recent_k):
     if df is None or len(df) < 40: return None
     close, high, low, open_p = df['Close'], df['High'], df['Low'], df['Open']
@@ -160,7 +172,6 @@ def scan_4h_signals(df, recent_k):
         if (close.iloc[i] < rt_upper.iloc[i]) and ((high.iloc[i] > rt_upper.iloc[i] and close.iloc[i-1] < rt_upper.iloc[i] and rt_abv_cnt <= 10) or (close.iloc[i-1] > rt_upper.iloc[i] and rt_abv_cnt <= 10)) and can_fire_rt and (overbuy_count.iloc[i] > 0):
             curr_sigs.append("⚠️【多頭陷阱 (Bear Trap)】"); rt_last_sig = i
 
-        # 這裡套用使用者選擇的 K 棒數量 (recent_k)
         if i >= n - recent_k:
             for ob in bull_obs:
                 if low.iloc[i-1] >= ob['top'] and low.iloc[i] <= ob['top']: curr_sigs.append("🧱【OB支撐回踩】")
@@ -182,49 +193,49 @@ def format_vol(val):
 # ─── 網頁側邊欄設定 ───
 st.sidebar.header("⚙️ 雷達掃描設定")
 
-# 1. 收藏標的區塊 (支援自訂與台股)
+# 1. 收藏標的區塊 
 st.sidebar.subheader("📌 收藏標的 (自訂清單)")
 fav_input = st.sidebar.text_area(
     "請輸入股票代號 (用半形逗號分隔)：",
-    value="SPY, QQQ, NVDA, TSLA, 2330.TW, 0050.TW, BTC-USD",
-    help="美股直接輸入代號 (如 AAPL)。台股上市請加 .TW (如 2330.TW)，上櫃加 .TWO (如 3105.TWO)。加密貨幣加 -USD (如 ETH-USD)。"
+    value="SPY, QQQ, NVDA, TSLA, 2330.TW, 0050.TW, BTC-USD, ^TWII, NQ=F, ES=F",
+    help="台股大盤請輸入 ^TWII，納斯達克期貨 NQ=F，S&P500期貨 ES=F。"
 )
 
-# 2. 開關設定：是否載入美股三大指數全市場
+# 2. 開關設定
 st.sidebar.subheader("🌍 全市場掃描擴充")
-scan_us_indices = st.sidebar.checkbox("同步掃描美股三大指數 (約 900 檔)", value=False, help="打勾後會去爬取 S&P500、Nasdaq、費半成分股。若遇到卡頓可取消勾選，僅掃描上方的收藏標的。")
+scan_us_indices = st.sidebar.checkbox("同步掃描美股三大指數 (約 900 檔)", value=False)
 
 # 3. K 棒觸發範圍
 st.sidebar.subheader("🎯 訊號觸發條件")
-recent_k = st.sidebar.number_input("掃描近 N 根 4H K線", min_value=1, max_value=10, value=3, help="例如設定 2，代表只抓取「最新這 2 根 K 棒」內觸發的新鮮訊號。")
+recent_k = st.sidebar.number_input("掃描近 N 根 4H K線", min_value=1, max_value=10, value=3)
 
 # 4. 歷史天數
 st.sidebar.subheader("📅 底層資料參數")
-scan_days = st.sidebar.slider("載入歷史天數", min_value=30, max_value=90, value=60, help="計算均線(如55EMA)需要前期資料。建議維持60天確保指標精準。")
+scan_days = st.sidebar.slider("載入歷史天數", min_value=30, max_value=90, value=60)
 
 scan_btn = st.sidebar.button("🚀 立即啟動掃描", use_container_width=True)
 
 # ─── 主程式掃描執行 ───
 if scan_btn:
-    # 處理收藏清單
     favorites = [t.strip().upper() for t in fav_input.split(",") if t.strip()]
-    
-    # 若有開啟美股大盤，則加入大盤標的
     all_tickers = favorites.copy()
-    if scan_us_indices:
-        st.info("🔄 正在取得美股三大指數成分股清單...")
-        us_stocks = get_us_indices()
-        all_tickers.extend(us_stocks)
     
-    # 去除重複
-    all_tickers = list(dict.fromkeys(all_tickers))
+    if scan_us_indices:
+        with st.spinner("🔄 正在取得美股三大指數成分股清單..."):
+            us_stocks, success = get_us_indices()
+            if success:
+                st.success("✅ 成功從維基百科取得 900+ 檔美股清單！")
+            else:
+                st.warning("⚠️ 雲端主機被維基百科阻擋爬蟲，已自動切換至內建的「Top 40 龍頭備用清單」！")
+            all_tickers.extend(us_stocks)
+    
+    all_tickers = list(dict.fromkeys(all_tickers)) # 去除重複
     
     if not all_tickers:
         st.error("❌ 找不到要掃描的標的，請確認自訂清單是否正確！")
         st.stop()
 
-    st.success(f"✅ 成功載入 {len(all_tickers)} 檔標的，準備開始掃描...")
-
+    st.info(f"🚀 準備就緒！即將掃描共 {len(all_tickers)} 檔標的...")
     progress_bar = st.progress(0)
     status_text = st.empty()
 
@@ -244,7 +255,6 @@ if scan_btn:
                     df_t = df_t.dropna(subset=['Close'])
                     if len(df_t) > 40:
                         df_t.name = t
-                        # 傳入設定好的 recent_k
                         res = scan_4h_signals(resample_to_tv_4h(df_t), recent_k)
                         if res:
                             res["標的代號"] = t
@@ -265,7 +275,6 @@ if scan_btn:
             except: res['Raw_Volume'] = 0
 
             res['日均交易量'] = format_vol(res['Raw_Volume'])
-            # 優先標記收藏清單
             res['Priority'] = 1 if ticker in favorites else 0
             if ticker in favorites: res['標的代號'] = f"⭐ {ticker}"
 
