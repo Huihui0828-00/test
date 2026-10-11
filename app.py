@@ -259,3 +259,4 @@ Original file is located at
 
 import urllib
 print("👉 你的通關密碼 (Endpoint IP) 是：", urllib.request.urlopen('https://ipv4.icanhazip.com').read().decode('utf8').strip("\n"))
+streamlit run app.py & npx localtunnel --port 8501
